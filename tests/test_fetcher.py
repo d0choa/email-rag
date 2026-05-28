@@ -1,3 +1,5 @@
+import pytest
+
 from email_rag.fetcher import Fetcher
 
 
@@ -32,6 +34,26 @@ class FakeIMAP:
 
 
 RAW = b"From: a@x\r\nSubject: hi\r\nMessage-ID: <m@x>\r\n\r\nbody"
+
+
+def test_check_login_success_logs_out():
+    fake = FakeIMAP({})
+    f = Fetcher("host", 993, "user", "pw", client_factory=lambda **k: fake)
+    f.check_login()  # must not raise
+    assert fake.user == "user"
+    assert fake.logged_out is True
+
+
+def test_check_login_propagates_auth_failure():
+    class FailIMAP(FakeIMAP):
+        def login(self, user, password):
+            raise RuntimeError("[AUTHENTICATIONFAILED] bad credentials")
+
+    fail = FailIMAP({})
+    f = Fetcher("host", 993, "user", "bad", client_factory=lambda **k: fail)
+    with pytest.raises(RuntimeError, match="AUTHENTICATIONFAILED"):
+        f.check_login()
+    assert fail.logged_out is True  # finally still ran
 
 
 def test_first_sync_fetches_all_and_returns_state():
