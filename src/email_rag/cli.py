@@ -32,14 +32,22 @@ def _load(ctx):
 @main.command()
 @click.option("--imap-host", prompt=True)
 @click.option("--imap-user", prompt=True)
+@click.option("--imap-port", default=993, show_default=True, type=int)
 @click.pass_context
-def init(ctx, imap_host, imap_user):
-    """Write config, store IMAP password, verify connectivity + Ollama."""
+def init(ctx, imap_host, imap_user, imap_port):
+    """Write config, store IMAP password, verify IMAP login + Ollama."""
     path = ctx.obj["config_path"]
-    cfg = write_starter_config(path, imap_host=imap_host, imap_user=imap_user)
+    cfg = write_starter_config(
+        path, imap_host=imap_host, imap_user=imap_user, imap_port=imap_port
+    )
     Database(cfg.db_path).init_schema(dim=768)
     pw = getpass("IMAP password: ")
     set_imap_password(imap_user, pw)
+    try:
+        Fetcher(cfg.imap_host, cfg.imap_port, cfg.imap_user, pw).check_login()
+        click.echo("IMAP login OK.")
+    except Exception as e:  # noqa: BLE001
+        click.echo(f"WARNING: IMAP login failed: {e}", err=True)
     try:
         Embedder(cfg.ollama_url, cfg.embed_model).health_check()
         click.echo("Ollama OK.")

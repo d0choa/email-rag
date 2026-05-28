@@ -17,6 +17,17 @@ class Fetcher:
         self.last_uidvalidity = None
         self.last_uid = 0
 
+    def check_login(self) -> None:
+        """Connect, authenticate, and log out. Raises on auth/connection failure."""
+        client = self._factory(host=self.host, port=self.port)
+        try:
+            client.login(self.user, self.password)
+        finally:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
     def sync_folder(self, folder, last_seen_uid, uidvalidity, since, batch_size=200):
         """Yield (uid, raw_bytes) for new messages; track last_uid/last_uidvalidity.
 
