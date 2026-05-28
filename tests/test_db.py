@@ -17,6 +17,14 @@ def test_meta_records_schema_version(db):
     assert int(row["value"]) == SCHEMA_VERSION
 
 
+def test_creates_parent_directory(tmp_path):
+    path = tmp_path / "nested" / "deeper" / "index.db"
+    database = Database(str(path))
+    database.init_schema(dim=4)
+    assert path.exists()
+    database.close()
+
+
 def test_vec_table_accepts_vector(db):
     db.conn.execute(
         "INSERT INTO vec_chunks(rowid, embedding) VALUES (1, ?)",

@@ -1,3 +1,5 @@
+import re
+import sqlite3
 from datetime import datetime
 
 import sqlite_vec
@@ -6,6 +8,13 @@ from email_rag.db import Database
 from email_rag.models import Retrieved
 
 RRF_K = 60
+
+
+def _fts_query(text: str) -> str:
+    tokens = re.findall(r"\w+", text, flags=re.UNICODE)
+    # OR-join so a natural-language query matches on any term (recall-oriented);
+    # space-joining would be AND, requiring every token present.
+    return " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
 
 
 def _parse_date(value: str) -> datetime:
@@ -31,8 +40,11 @@ class Filters:
             clauses.append("m.date >= ?")
             params.append(self.since)
         if self.until:
+            until_bound = (
+                self.until if "T" in self.until else self.until + "T23:59:59.999999"
+            )
             clauses.append("m.date <= ?")
-            params.append(self.until)
+            params.append(until_bound)
         if self.folder:
             clauses.append("m.folder = ?")
             params.append(self.folder)
@@ -50,6 +62,7 @@ class VectorStore:
         )
 
     def add_fts(self, chunk_id: int, text: str) -> None:
+        self.db.conn.execute("DELETE FROM chunks_fts WHERE rowid = ?", (chunk_id,))
         self.db.conn.execute(
             "INSERT INTO chunks_fts(rowid, text) VALUES (?, ?)", (chunk_id, text)
         )
@@ -82,12 +95,18 @@ class VectorStore:
         return hits[:k]
 
     def search_fts(self, query_text, k, filters=None) -> list[int]:
+        match = _fts_query(query_text)
+        if not match:
+            return []
         allowed = self._allowed_ids(filters)
-        rows = self.db.conn.execute(
-            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
-            "ORDER BY rank LIMIT ?",
-            (query_text, k * 5 if allowed is not None else k),
-        ).fetchall()
+        try:
+            rows = self.db.conn.execute(
+                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
+                "ORDER BY rank LIMIT ?",
+                (match, k * 5 if allowed is not None else k),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
         ids = [r["rowid"] for r in rows]
         if allowed is not None:
             ids = [i for i in ids if i in allowed]
