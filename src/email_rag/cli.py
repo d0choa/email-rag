@@ -88,13 +88,21 @@ def sync(ctx, since, folders, full):
         validity = None if full else (row["uidvalidity"] if row else None)
         click.echo(f"Syncing {folder} (from UID {last_uid + 1})...")
         batch: list = []
+        skipped = 0
         for uid, raw in fetcher.sync_folder(folder, last_uid, validity, since_date):
-            batch.append(parse_message(raw, folder=folder, uid=uid))
+            try:
+                batch.append(parse_message(raw, folder=folder, uid=uid))
+            except Exception as e:  # noqa: BLE001 — one bad message must not abort the run
+                skipped += 1
+                click.echo(f"  skipped uid {uid} in {folder}: {e}", err=True)
+                continue
             if len(batch) >= 200:
                 indexer.store_messages(batch)
                 batch = []
         if batch:
             indexer.store_messages(batch)
+        if skipped:
+            click.echo(f"  ({skipped} unparseable message(s) skipped in {folder})")
         db.conn.execute(
             "INSERT OR REPLACE INTO sync_state(folder, uidvalidity, last_seen_uid)"
             " VALUES (?,?,?)",
