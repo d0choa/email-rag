@@ -1,5 +1,6 @@
 from email_rag.db import Database
 from email_rag.models import Retrieved
+from email_rag.store import _parse_date
 
 SYSTEM_PROMPT = (
     "You answer questions using ONLY the provided email excerpts. "
@@ -58,8 +59,6 @@ class Answerer:
                 if row["message_id"] in seen:
                     continue
                 seen.add(row["message_id"])
-                from email_rag.store import _parse_date
-
                 expanded.append(
                     Retrieved(
                         chunk_id=-1,

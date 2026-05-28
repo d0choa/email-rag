@@ -17,6 +17,19 @@ def test_status_reports_counts(tmp_path, monkeypatch):
     assert "messages" in result.output.lower()
 
 
+def test_search_without_index_errors(tmp_path):
+    from email_rag.config import write_starter_config
+
+    cfg_path = tmp_path / "config.toml"
+    db_path = tmp_path / "missing" / "index.db"
+    write_starter_config(cfg_path, imap_host="h", imap_user="u", db_path=str(db_path))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["--config", str(cfg_path), "search", "anything"])
+    assert result.exit_code != 0
+    assert "sync" in result.output
+
+
 def test_search_prints_no_results_cleanly(tmp_path):
     from email_rag.config import write_starter_config
     from email_rag.db import Database

@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 
 import sqlite_vec
 
@@ -7,6 +8,8 @@ SCHEMA_VERSION = 1
 
 class Database:
     def __init__(self, path: str):
+        if path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.enable_load_extension(True)

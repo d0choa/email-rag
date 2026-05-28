@@ -1,8 +1,7 @@
 import json as jsonlib
-import os
-import sys
-from datetime import datetime, timezone
+from datetime import datetime
 from getpass import getpass
+from pathlib import Path
 
 import click
 
@@ -114,6 +113,8 @@ def ask(ctx, question, from_addr, since, until, top_k, model, as_json):
     import anthropic
 
     cfg = _load(ctx)
+    if not Path(cfg.db_path).exists():
+        raise click.ClickException("No index found. Run `email-rag sync` first.")
     db = Database(cfg.db_path)
     _check_embed_model(db, cfg)
     embedder = Embedder(cfg.ollama_url, cfg.embed_model)
@@ -142,6 +143,8 @@ def ask(ctx, question, from_addr, since, until, top_k, model, as_json):
 def search(ctx, query, from_addr, since, until, top_k):
     """Retrieval only — ranked snippets, no LLM call."""
     cfg = _load(ctx)
+    if not Path(cfg.db_path).exists():
+        raise click.ClickException("No index found. Run `email-rag sync` first.")
     db = Database(cfg.db_path)
     _check_embed_model(db, cfg)
     embedder = Embedder(cfg.ollama_url, cfg.embed_model)
