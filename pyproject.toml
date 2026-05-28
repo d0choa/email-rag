@@ -1,0 +1,33 @@
+[project]
+name = "email-rag"
+version = "0.1.0"
+description = "Local-first RAG over an IMAP mailbox"
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1",
+    "imapclient>=3.0",
+    "selectolax>=0.3",
+    "talon>=1.4.4",
+    "sqlite-vec>=0.1.6",
+    "httpx>=0.27",
+    "keyring>=25.0",
+    "anthropic>=0.39",
+    "tomli-w>=1.0",
+]
+
+[project.scripts]
+email-rag = "email_rag.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+prerelease = "if-necessary-or-explicit"
+no-build-package = ["cchardet"]
