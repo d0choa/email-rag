@@ -10,9 +10,28 @@ from email_rag.models import ParsedMessage
 
 
 def _decode(value: str | None) -> str:
+    """Decode an RFC 2047 header, tolerating mislabeled or invalid charsets.
+
+    Real mailboxes contain headers whose declared charset is wrong (e.g. bytes
+    that are illegal for the announced `gb2312`). stdlib `make_header` decodes
+    strictly and raises; we decode each part ourselves with errors="replace"
+    and fall back to utf-8 for unknown charsets so no single header aborts a sync.
+    """
     if not value:
         return ""
-    return str(make_header(decode_header(value)))
+    try:
+        parts: list[str] = []
+        for raw, charset in decode_header(value):
+            if isinstance(raw, bytes):
+                try:
+                    parts.append(raw.decode(charset or "utf-8", errors="replace"))
+                except LookupError:
+                    parts.append(raw.decode("utf-8", errors="replace"))
+            else:
+                parts.append(raw)
+        return "".join(parts)
+    except Exception:
+        return value if isinstance(value, str) else str(value)
 
 
 def _addrs(msg: Message, header: str) -> list[str]:

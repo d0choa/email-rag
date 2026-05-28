@@ -43,3 +43,22 @@ def test_parse_html_to_text():
     m = parse_message(HTML, folder="INBOX", uid=43)
     assert "Hello world" in m.body
     assert "<b>" not in m.body
+
+
+BAD_CHARSET = (
+    b"From: Alice <alice@example.com>\n"
+    b"Subject: =?gb2312?Q?=A8?=\n"  # 0xA8 is illegal for gb2312 -> strict decode raises
+    b"Date: Mon, 06 Jan 2025 10:00:00 +0000\n"
+    b"Message-ID: <bad@example.com>\n"
+    b"Content-Type: text/plain; charset=utf-8\n"
+    b"\n"
+    b"body\n"
+)
+
+
+def test_parse_tolerates_invalid_charset_in_subject():
+    # Must not raise UnicodeDecodeError; subject decoded best-effort to a str.
+    m = parse_message(BAD_CHARSET, folder="INBOX", uid=1)
+    assert isinstance(m.subject, str)
+    assert m.message_id == "<bad@example.com>"
+    assert "body" in m.body
