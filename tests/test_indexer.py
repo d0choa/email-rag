@@ -44,6 +44,28 @@ def test_embed_pending_marks_embedded(db):
     assert n_vec == 1
 
 
+class FlakyEmbedder:
+    """Fails any embed request containing the poison token (batch or single)."""
+
+    def embed_documents(self, texts):
+        if any("BAD" in t for t in texts):
+            raise RuntimeError("400 Bad Request")
+        return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+
+def test_embed_pending_isolates_unembeddable_chunk(db):
+    idx = Indexer(db, FlakyEmbedder(), VectorStore(db))
+    idx.store_messages([_msg("<good@x>", "good body"), _msg("<bad@x>", "BAD body")])
+    count = idx.embed_pending(batch_size=10)
+    assert count == 1  # only the good chunk embedded
+    pending = db.conn.execute("SELECT count(*) c FROM chunks WHERE embedded=0").fetchone()["c"]
+    assert pending == 0  # run terminates, nothing left in queue
+    failed = db.conn.execute("SELECT count(*) c FROM chunks WHERE embedded=2").fetchone()["c"]
+    assert failed == 1  # bad chunk parked with the failure sentinel
+    n_vec = db.conn.execute("SELECT count(*) c FROM vec_chunks").fetchone()["c"]
+    assert n_vec == 1
+
+
 def test_store_messages_is_idempotent(db):
     idx = Indexer(db, FakeEmbedder(), VectorStore(db))
     idx.store_messages([_msg("<m@x>", "hello world")])
