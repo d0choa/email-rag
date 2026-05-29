@@ -2,6 +2,7 @@ import re
 import sqlite3
 from datetime import datetime
 
+import numpy as np
 import sqlite_vec
 
 from email_rag.db import Database
@@ -86,38 +87,74 @@ class VectorStore:
 
     def search_vectors(self, query_vec, k, filters=None):
         allowed = self._allowed_ids(filters)
-        oversample = k * 5 if allowed is not None else k
-        rows = self.db.conn.execute(
-            "SELECT rowid, distance FROM vec_chunks "
-            "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
-            (sqlite_vec.serialize_float32(query_vec), oversample),
-        ).fetchall()
-        hits = [(r["rowid"], r["distance"]) for r in rows]
-        if allowed is not None:
-            hits = [h for h in hits if h[0] in allowed]
-        return hits[:k]
+        if allowed is None:
+            # Unfiltered: use the indexed vec0 KNN.
+            rows = self.db.conn.execute(
+                "SELECT rowid, distance FROM vec_chunks "
+                "WHERE embedding MATCH ? AND k = ? ORDER BY distance",
+                (sqlite_vec.serialize_float32(query_vec), k),
+            ).fetchall()
+            return [(r["rowid"], r["distance"]) for r in rows]
+        if not allowed:
+            return []
+        # Filtered: rank exactly WITHIN the allowed set. vec0 KNN can't be
+        # constrained to a metadata subset, and post-filtering a global top-k
+        # silently drops matches that aren't global nearest neighbours.
+        return self._exact_filtered_knn(query_vec, k, allowed)
+
+    def _exact_filtered_knn(self, query_vec, k, allowed):
+        ids = list(allowed)
+        qv = np.asarray(query_vec, dtype=np.float32)
+        cids: list[int] = []
+        mats: list = []
+        for i in range(0, len(ids), 500):
+            batch = ids[i : i + 500]
+            placeholders = ",".join("?" * len(batch))
+            rows = self.db.conn.execute(
+                f"SELECT rowid, embedding FROM vec_chunks WHERE rowid IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for r in rows:
+                cids.append(r["rowid"])
+                mats.append(np.frombuffer(r["embedding"], dtype=np.float32))
+        if not cids:
+            return []
+        dists = np.linalg.norm(np.vstack(mats) - qv, axis=1)
+        order = np.argsort(dists)[:k]
+        return [(int(cids[i]), float(dists[i])) for i in order]
 
     def search_fts(self, query_text, k, filters=None) -> list[int]:
         match = _fts_query(query_text)
         if not match:
             return []
-        allowed = self._allowed_ids(filters)
+        where, params = filters.where() if filters else ("", [])
+        sql = "SELECT f.rowid FROM chunks_fts f"
+        if where:
+            # Push the metadata filter into SQL so FTS ranks within the subset
+            # instead of post-filtering a global top-k.
+            sql += (
+                " JOIN chunks c ON c.chunk_id = f.rowid"
+                " JOIN messages m ON m.message_id = c.message_id"
+            )
+        sql += " WHERE chunks_fts MATCH ?"
+        args: list = [match]
+        if where:
+            sql += f" AND {where}"
+            args += params
+        sql += " ORDER BY rank LIMIT ?"
+        args.append(k)
         try:
-            rows = self.db.conn.execute(
-                "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? "
-                "ORDER BY rank LIMIT ?",
-                (match, k * 5 if allowed is not None else k),
-            ).fetchall()
+            rows = self.db.conn.execute(sql, args).fetchall()
         except sqlite3.OperationalError:
             return []
-        ids = [r["rowid"] for r in rows]
-        if allowed is not None:
-            ids = [i for i in ids if i in allowed]
-        return ids[:k]
+        return [r["rowid"] for r in rows]
 
     def hybrid_search(self, query_vec, query_text, k, filters=None):
-        vec_hits = self.search_vectors(query_vec, k, filters)
-        fts_hits = self.search_fts(query_text, k, filters)
+        # Over-retrieve per arm so that, after collapsing to one chunk per
+        # message, we still have ~k distinct messages to return.
+        pool = max(k * 3, 30)
+        vec_hits = self.search_vectors(query_vec, pool, filters)
+        fts_hits = self.search_fts(query_text, pool, filters)
 
         scores: dict[int, float] = {}
         for rank, (cid, _dist) in enumerate(vec_hits):
@@ -125,8 +162,18 @@ class VectorStore:
         for rank, cid in enumerate(fts_hits):
             scores[cid] = scores.get(cid, 0.0) + 1.0 / (RRF_K + rank)
 
-        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:k]
-        return self._hydrate(ranked)
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        # Collapse to the best-scoring chunk per message; keep top-k messages.
+        out: list[Retrieved] = []
+        seen: set[str] = set()
+        for r in self._hydrate(ranked):
+            if r.message_id in seen:
+                continue
+            seen.add(r.message_id)
+            out.append(r)
+            if len(out) >= k:
+                break
+        return out
 
     def _hydrate(self, ranked: list) -> list:
         out: list[Retrieved] = []
