@@ -1,5 +1,10 @@
 import httpx
 
+# Safety net: never send an input longer than this to the model, regardless of
+# chunking. ~2k tokens at 4 chars/token keeps us well within nomic-embed-text's
+# context so a pathological chunk can't trigger a 400.
+MAX_INPUT_CHARS = 8000
+
 
 class Embedder:
     def __init__(self, url: str, model: str, client=None):
@@ -16,10 +21,10 @@ class Embedder:
         return resp.json()["embeddings"]
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
-        return self._embed([f"search_document: {t}" for t in texts])
+        return self._embed([f"search_document: {t[:MAX_INPUT_CHARS]}" for t in texts])
 
     def embed_query(self, text: str) -> list[float]:
-        return self._embed([f"search_query: {text}"])[0]
+        return self._embed([f"search_query: {text[:MAX_INPUT_CHARS]}"])[0]
 
     def health_check(self) -> None:
         """Raise if Ollama is unreachable or the model is missing."""

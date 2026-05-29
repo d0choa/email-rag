@@ -58,13 +58,42 @@ class Indexer:
                 break
             ids = [r["chunk_id"] for r in rows]
             texts = [r["text"] for r in rows]
-            vectors = self.embedder.embed_documents(texts)
-            for cid, text, vec in zip(ids, texts, vectors):
+            try:
+                vectors = self.embedder.embed_documents(texts)
+                pairs = list(zip(ids, texts, vectors))
+                failed_ids: list[int] = []
+            except Exception:
+                # A bad item fails the whole batch request; retry one at a time
+                # so a single unembeddable chunk can't abort the run.
+                pairs, failed_ids = self._embed_individually(ids, texts)
+            for cid, text, vec in pairs:
                 self.store.add_embedding(cid, vec)
                 self.store.add_fts(cid, text)
                 self.db.conn.execute(
                     "UPDATE chunks SET embedded=1 WHERE chunk_id=?", (cid,)
                 )
+            for cid in failed_ids:
+                # Sentinel 2 = "tried, model rejected" — keeps it out of the
+                # embedded=0 work queue so the run terminates.
+                self.db.conn.execute(
+                    "UPDATE chunks SET embedded=2 WHERE chunk_id=?", (cid,)
+                )
             self.db.conn.commit()
-            total += len(rows)
+            total += len(pairs)
         return total
+
+    def _embed_individually(self, ids, texts):
+        """Embed chunks one by one, isolating any the model rejects.
+
+        Returns (succeeded_triples, failed_ids) where succeeded_triples are
+        (chunk_id, text, vector) and failed_ids are chunk_ids the model rejected.
+        """
+        pairs, failed_ids = [], []
+        for cid, text in zip(ids, texts):
+            try:
+                vec = self.embedder.embed_documents([text])[0]
+            except Exception:
+                failed_ids.append(cid)
+                continue
+            pairs.append((cid, text, vec))
+        return pairs, failed_ids

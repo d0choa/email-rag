@@ -28,3 +28,20 @@ def test_long_body_splits_on_paragraphs():
     chunks = chunk_message(_msg(body), max_chars=600)
     assert len(chunks) >= 3
     assert [c.ord for c in chunks] == list(range(len(chunks)))
+
+
+def test_single_oversized_paragraph_is_hard_split():
+    # One unbroken block with no blank lines must still be capped per chunk.
+    body = "word " * 2000  # ~10000 chars, single paragraph
+    chunks = chunk_message(_msg(body), max_chars=1000)
+    assert len(chunks) >= 10
+    assert all(len(c.text) <= 1000 for c in chunks)
+    assert [c.ord for c in chunks] == list(range(len(chunks)))
+
+
+def test_unbreakable_blob_is_hard_cut():
+    # No spaces or newlines at all (e.g. a base64 blob) -> hard cut at max_chars.
+    body = "x" * 5000
+    chunks = chunk_message(_msg(body), max_chars=1000)
+    assert all(len(c.text) <= 1000 for c in chunks)
+    assert sum(len(c.text) for c in chunks) == 5000
