@@ -32,6 +32,21 @@ def test_add_and_vector_search(db):
     assert hits[0][0] == 1  # nearest chunk_id first
 
 
+def test_add_embedding_is_idempotent(db):
+    # Re-adding the same chunk_id (resume/re-embed) must not raise and must not
+    # duplicate the vector row.
+    store = VectorStore(db)
+    _insert_message(db, "<m1@x>")
+    db.conn.execute(
+        "INSERT INTO chunks(chunk_id, message_id, ord, text) VALUES (1, '<m1@x>', 0, 't')"
+    )
+    db.conn.commit()
+    store.add_embedding(1, [1.0, 0.0, 0.0, 0.0])
+    store.add_embedding(1, [0.0, 1.0, 0.0, 0.0])  # must not raise UNIQUE
+    n = db.conn.execute("SELECT count(*) c FROM vec_chunks").fetchone()["c"]
+    assert n == 1
+
+
 def test_fts_search(db):
     store = VectorStore(db)
     _insert_message(db, "<m1@x>")

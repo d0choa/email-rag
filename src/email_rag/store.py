@@ -56,8 +56,11 @@ class VectorStore:
         self.db = db
 
     def add_embedding(self, chunk_id: int, vector: list[float]) -> None:
+        # vec0 virtual tables ignore "INSERT OR REPLACE" conflict handling and
+        # raise UNIQUE on a duplicate rowid, so delete-then-insert (as for FTS).
+        self.db.conn.execute("DELETE FROM vec_chunks WHERE rowid = ?", (chunk_id,))
         self.db.conn.execute(
-            "INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES (?, ?)",
+            "INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)",
             (chunk_id, sqlite_vec.serialize_float32(vector)),
         )
 
